@@ -5,9 +5,7 @@ import St from 'gi://St';
 export const ItemBox = GObject.registerClass(
 class ItemBox extends St.Widget {
     _init(direction) {
-        super._init({ style_class: 'item-box',
-                      clip_to_allocation: true,
-        });
+        super._init({ clip_to_allocation: true });
 
         this.layout_manager = new BoxSlideLayout(this, direction);
     }

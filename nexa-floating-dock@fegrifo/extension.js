@@ -9,7 +9,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {DockBox} from './dockBox.js';
 import * as Util from './util.js';
 
-const SCHEMA = 'org.gnome.shell.extensions.floatingDock';
+const SCHEMA = 'org.gnome.shell.extensions.nexa-floating-dock';
 const HOTKEY = 'floating-dock-hotkey';
 const DIRECTION = 'floating-dock-direction';
 const ICON_SIZE = 'floating-dock-icon-size';

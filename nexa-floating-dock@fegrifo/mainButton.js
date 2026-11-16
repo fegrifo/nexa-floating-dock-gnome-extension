@@ -10,12 +10,15 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {SwitchWorkspace} from './switchWorkspace.js';
 
 const ICON_FILE = 'floating-dock-icon-file';
+const ACCENT_COLOR = 'floating-dock-accent-color';
 const DELAY = 3000;
 
 export const MainButton = GObject.registerClass(
 class MainButton extends St.Button {
     _init(iconSize, settings, dir) {
-        super._init({ name: 'floating-dock-main-button' });
+        super._init({ name: 'floating-dock-main-button',
+                      style_class: 'button-box',
+                      track_hover: true });
 
         this.settings = settings;
         this.iconSize = iconSize;
@@ -30,32 +33,19 @@ class MainButton extends St.Button {
         });
         this.set_child(this.container);
 
-        this.icon = new St.Icon({ gicon: this._createButtonIcon(),
-                                  icon_size: this.iconSize });
+        let accentColor = this.settings.get_string(ACCENT_COLOR);
+        this.icon = new St.Icon({ icon_name: 'view-app-grid-symbolic',
+                                  icon_size: this.iconSize,
+                                  style: `color: ${accentColor};` });
         this.container.add_child(this.icon);
-
-        let scaleFactor = St.ThemeContext.get_for_stage(global.stage).scale_factor;
-        this.transparentIcon = new St.Widget({
-            name: 'floating-dock-transparent-button',
-            x: 0,
-            y: 0,
-            width: this.iconSize * scaleFactor,
-            height: this.iconSize * scaleFactor,
-        });
 
         let switchWorkspace = new SwitchWorkspace();
         this.connect('scroll-event', switchWorkspace.scrollEvent.bind(switchWorkspace));
 
-        this.iconFileID = this.settings.connect("changed::" + ICON_FILE, () => {
-            let child = this.container.get_first_child();
-            this.container.remove_child(child);
-            this.icon = new St.Icon({ gicon: this._createButtonIcon(),
-                                      icon_size: this.iconSize });
-            this.container.add_child(this.icon);
-            this._addWatch();
+        this.accentColorID = this.settings.connect("changed::" + ACCENT_COLOR, () => {
+            let color = this.settings.get_string(ACCENT_COLOR);
+            this.icon.set_style(`color: ${color};`);
         });
-
-        Main.layoutManager.addChrome(this, { trackFullscreen: true });
 
         this._addWatch();
     }
@@ -69,8 +59,10 @@ class MainButton extends St.Button {
     }
 
     createDragButton() {
-        let icon = new St.Icon({ gicon: this._createButtonIcon(),
-                                 icon_size: this.iconSize });
+        let accentColor = this.settings.get_string(ACCENT_COLOR);
+        let icon = new St.Icon({ icon_name: 'view-app-grid-symbolic',
+                                 icon_size: this.iconSize,
+                                 style: `color: ${accentColor};` });
         let button= new St.Button({ name: 'floating-dock-main-button',
                                     child: icon });
         return button;
@@ -99,17 +91,11 @@ class MainButton extends St.Button {
     }
 
     _showIcon() {
-        if (this.container.get_first_child() == this.transparentIcon) {
-            this.container.remove_child(this.transparentIcon);
-            this.container.add_child(this.icon);
-        }
+        this.icon.opacity = 255;
     }
 
     _hideIcon() {
-        if (this.container.get_first_child() == this.icon) {
-            this.container.remove_child(this.icon);
-            this.container.add_child(this.transparentIcon);
-        }
+        this.icon.opacity = 90;
     }
 
     vfunc_enter_event(crossingEvent) {
@@ -137,8 +123,8 @@ class MainButton extends St.Button {
 
     destroy() {
         this._removeWatch();
-        if (this.iconFileID > 0)
-            this.settings.disconnect(this.iconFileID);
-        Main.layoutManager.removeChrome(this);
+        if (this.accentColorID > 0)
+            this.settings.disconnect(this.accentColorID);
+        super.destroy();
     }
 });

@@ -1,4 +1,5 @@
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
@@ -7,14 +8,37 @@ import Clutter from 'gi://Clutter';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Params from 'resource:///org/gnome/shell/misc/params.js';
 import * as SystemActions from 'resource:///org/gnome/shell/misc/systemActions.js';
+import {getTranslator} from './translations.js';
 
-const SCHEMA = 'org.gnome.shell.extensions.floatingDock';
+const SCHEMA = 'org.gnome.shell.extensions.nexa-floating-dock';
 const APP_LIST = 'floating-dock-app-list';
 const DIRECTION_ID = 'floating-dock-direction';
 
 const SYSTEM_ACTIONS = ['lock-screen', 'logout', 'suspend', 'power-off'];
 
 const DIRECTION = ['up', 'down', 'right', 'left'];
+const RADIAL_SVG_ICONS = {
+    'lock-screen': 'lock-symbolic.svg',
+    'logout': 'logout-symbolic.svg',
+    'suspend': 'suspend-symbolic.svg',
+    'power-off': 'power-symbolic.svg',
+    'up': 'up-symbolic.svg',
+    'down': 'down-symbolic.svg',
+    'right': 'right-symbolic.svg',
+    'left': 'left-symbolic.svg',
+};
+const BUTTON_LABEL_KEYS = {
+    'lock-screen': 'tooltip_lock',
+    'logout': 'tooltip_logout',
+    'suspend': 'tooltip_suspend',
+    'power-off': 'tooltip_power',
+    'up': 'tooltip_up',
+    'down': 'tooltip_down',
+    'right': 'tooltip_right',
+    'left': 'tooltip_left',
+};
+const ACCENT_COLOR = 'floating-dock-accent-color';
+const TOOLTIP_DELAY = 2000;
 
 const ITEM_ANIMATION_TIME = 200;
 
@@ -68,10 +92,15 @@ class AroundButtonManager extends St.Widget {
         this._aroundButtons.forEach( button => { this.add_child(button); });
         Main.layoutManager.addChrome(this);
         this._mainButtonHideId = this._mainButton.connect('hide', () => this.popupClose() );
+        this._accentColorID = this._gsettings.connect('changed::' + ACCENT_COLOR, () => {
+            let color = this._gsettings.get_string(ACCENT_COLOR);
+            this._aroundButtons.forEach(button => button.setAccentColor(color));
+        });
     }
 
     createButton(id, number) {
-        let button = new AroundButton(id, number, this.iconSize, this._mainButton, this._dir);
+        let accentColor = this._gsettings.get_string(ACCENT_COLOR);
+        let button = new AroundButton(id, number, this.iconSize, this._mainButton, this._dir, accentColor, this._gsettings);
 
         button.hide();
         button.connect('animation-complete', this.hideWidget.bind(this));
@@ -91,15 +120,20 @@ class AroundButtonManager extends St.Widget {
     popupClose() {
         this.showAroundButton = false;
         this.hideButton(false);
+        this.set_position(0, 0);
         this.hide();
     }
 
     directionChanged(button, direction) {
         this.popupClose();
-        this._gsettings.set_string(DIRECTION_ID, direction);
+        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            this._gsettings.set_string(DIRECTION_ID, direction);
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     showButton(animation) {
+        this.set_position(0, 0);
         this.show();
         if (animation)
             this._aroundButtons.forEach( button => { button.showAnimation(); });
@@ -125,6 +159,8 @@ class AroundButtonManager extends St.Widget {
     destroy() {
         if (this._mainButtonHideId)
             this._mainButton.disconnect(this._mainButtonHideId);
+        if (this._accentColorID)
+            this._gsettings.disconnect(this._accentColorID);
 
         this._aroundButtons.forEach( button => { button.destroy(); });
         Main.layoutManager.removeChrome(this);
@@ -140,8 +176,9 @@ const AroundButton = GObject.registerClass({
         'direction-changed': { param_types: [GObject.TYPE_STRING] },
     },
 }, class AroundButton extends St.Button {
-    _init(id, number, iconSize, mainButton, dir) {
+    _init(id, number, iconSize, mainButton, dir, accentColor = '#ffffff', settings = null) {
         super._init({ name: 'floating-dock-around-button',
+                      x_align: Clutter.ActorAlign.CENTER,
                       y_align: Clutter.ActorAlign.CENTER,
                       reactive: true,
                       track_hover: true,
@@ -155,32 +192,38 @@ const AroundButton = GObject.registerClass({
         this.number = number;
         this.iconSize = iconSize;
         this.mainButton = mainButton;
+        this._settings = settings;
+        this._symbolicIcon = null;
         this.set_pivot_point(0.5, 0.5);
         this.scale = 0.8;
         this.scaleFactor = St.ThemeContext.get_for_stage(global.stage).scale_factor;
 
         this._systemActions = new SystemActions.getDefault();
 
+        let symbolicSize = Math.round(this.iconSize * 0.6);
         if (this.isApp) {
             let app = appSys.lookup_app(this.id);
             this.set_child(app.create_icon_texture(this.iconSize));
-        } else if (this.isAction) {
-            let iconName = this._systemActions.getIconName(id);
-            let icon = new St.Icon({ icon_name: iconName,
-                                     width: this.iconSize,
-                                     height: this.iconSize,
-                                     style_class: 'system-action-icon' });
-            this.set_child(icon);
         } else {
-            let uri = dir.get_path() + '/icons/' + this.id + '.png';
-            let gicon = new Gio.FileIcon({ file: Gio.File.new_for_path(uri) });
-            let icon = new St.Icon({ gicon: gicon,
-                                     icon_size: this.iconSize });
-            this.set_child(icon);
+            let fileName = RADIAL_SVG_ICONS[this.id];
+            let iconFile = Gio.File.new_for_path(dir.get_path() + '/icons/' + fileName);
+            this._symbolicIcon = new St.Icon({ gicon: new Gio.FileIcon({ file: iconFile }),
+                                               icon_size: symbolicSize,
+                                               style: `color: ${accentColor};` });
+            this.set_child(this._symbolicIcon);
         }
 
         this.connect('clicked', this._onClicked.bind(this));
         this.connect('notify::hover', this._onHover.bind(this));
+
+        this._tooltipTimeoutId = 0;
+        this._tooltip = new St.Label({
+            style_class: 'dash-label',
+            text: this.id,
+        });
+        this._tooltip.hide();
+        Main.layoutManager.addChrome(this._tooltip);
+        this.connect('destroy', this._onDestroy.bind(this));
     }
 
     /*
@@ -190,112 +233,94 @@ const AroundButton = GObject.registerClass({
      *    6      4
      *       5
      */
+    setAccentColor(color) {
+        if (this._symbolicIcon)
+            this._symbolicIcon.set_style(`color: ${color};`);
+    }
+
     _circle(box) {
-        let R = this.iconSize * 1.2 * this.scaleFactor;
+        let R = this.iconSize * 1.8 * this.scaleFactor;
+        let [, btnW] = this.get_preferred_width(-1);
+        let [, btnH] = this.get_preferred_height(-1);
+        let baseX = box.x1 + (box.x2 - box.x1 - btnW) / 2;
+        let baseY = box.y1 + (box.y2 - box.y1 - btnH) / 2;
 
         let x, y;
         if (this.number == 0) {
-            x = box.x1 - R * 0.7071;
-            y = box.y1 - R * 0.7071;
+            x = baseX - R * 0.7071;
+            y = baseY - R * 0.7071;
         } else if (this.number == 1) {
-            x = box.x1;
-            y = box.y1 - R;
+            x = baseX;
+            y = baseY - R;
         } else if (this.number == 2) {
-            x = box.x1 + R * 0.7071;
-            y = box.y1 - R * 0.7071;
+            x = baseX + R * 0.7071;
+            y = baseY - R * 0.7071;
         } else if (this.number == 7) {
-            x = box.x1 - R;
-            y = box.y1;
+            x = baseX - R;
+            y = baseY;
         } else if (this.number == 3) {
-            x = box.x1 + R;
-            y = box.y1;
+            x = baseX + R;
+            y = baseY;
         } else if (this.number == 6) {
-            x = box.x1 - R * 0.7071;
-            y = box.y1 + R * 0.7071;
+            x = baseX - R * 0.7071;
+            y = baseY + R * 0.7071;
         } else if (this.number == 5) {
-            x = box.x1;
-            y = box.y1 + R;
+            x = baseX;
+            y = baseY + R;
         } else if (this.number == 4) {
-            x = box.x1 + R * 0.7071;
-            y = box.y1 + R * 0.7071;
+            x = baseX + R * 0.7071;
+            y = baseY + R * 0.7071;
         }
 
         return [x, y];
     }
 
-    /*
-     *  +----+----+----+
-     *  | 0  | 1  | 2  |
-     *  +----+----+----+
-     *  | 3  |Main| 4  |
-     *  +----+----+----+
-     *  | 5  | 6  | 7  |
-     *  +----+----+----+
-     */
-    _square(box) {
-        let boxWidth = (box.x2 - box.x1) * this.scaleFactor;
-        let boxHeight = (box.y2 - box.y1) * this.scaleFactor;
-
-        let x, y;
-        if (this.number == 0) {
-            x = box.x1 - boxWidth;
-            y = box.y1 - boxHeight;
-        } else if (this.number == 1) {
-            x = box.x1;
-            y = box.y1 - boxHeight;
-        } else if (this.number == 2) {
-            x = box.x1 + boxWidth;
-            y = box.y1 - boxHeight;
-        } else if (this.number == 3) {
-            x = box.x1 - boxWidth;
-            y = box.y1;
-        } else if (this.number == 4) {
-            x = box.x1 + boxWidth;
-            y = box.y1;
-        } else if (this.number == 5) {
-            x = box.x1 - boxWidth;
-            y = box.y1 + boxHeight;
-        } else if (this.number == 6) {
-            x = box.x1;
-            y = box.y1 + boxHeight;
-        } else if (this.number == 7) {
-            x = box.x1 + boxWidth;
-            y = box.y1 + boxHeight;
-        }
-
-        return [x, y];
+    _getMainButtonBox() {
+        let [x, y] = this.mainButton.get_transformed_position();
+        let [w, h] = this.mainButton.get_size();
+        let box = new Clutter.ActorBox();
+        box.x1 = x;
+        box.y1 = y;
+        box.x2 = x + w;
+        box.y2 = y + h;
+        return box;
     }
 
     showAnimation() {
-        let box = this.mainButton.get_allocation_box();
-        let boxWidth = box.x2 - box.x1;
-        let boxHeight = box.y2 - box.y1;
+        let box = this._getMainButtonBox();
+        let [, btnW] = this.get_preferred_width(-1);
+        let [, btnH] = this.get_preferred_height(-1);
+        let startX = box.x1 + (box.x2 - box.x1 - btnW) / 2;
+        let startY = box.y1 + (box.y2 - box.y1 - btnH) / 2;
 
         this.show();
-        this.set_position(box.x1, box.y1);
+        this.set_position(startX, startY);
 
-        //let [x, y] = this._square(box);
         let [x, y] = this._circle(box);
         this.scale = 0;
         this.ease({
             x: x,
             y: y,
-            scale_x: 0.8,
-            scale_y: 0.8,
+            scale_x: 0.85,
+            scale_y: 0.85,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             duration: ITEM_ANIMATION_TIME,
             onComplete: () => {}
-                    //this.emit('animation-complete', this.number); }
             });
     }
 
     hideAnimation() {
-        let box = this.mainButton.get_allocation_box();
+        this._hideTooltip();
+        let box = this._getMainButtonBox();
+        let [, btnW] = this.get_preferred_width(-1);
+        let [, btnH] = this.get_preferred_height(-1);
+        let endX = box.x1 + (box.x2 - box.x1 - btnW) / 2;
+        let endY = box.y1 + (box.y2 - box.y1 - btnH) / 2;
 
         this.scale = 1;
         this.ease({
-            x: box.x1,
-            y: box.y1,
+            x: endX,
+            y: endY,
             scale_x: 0,
             scale_y: 0,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
@@ -307,6 +332,7 @@ const AroundButton = GObject.registerClass({
     }
 
     _onClicked() {
+        this._hideTooltip();
         if (this.isApp) {
             let app = appSys.lookup_app(this.id);
             app.open_new_window(-1);
@@ -322,12 +348,52 @@ const AroundButton = GObject.registerClass({
         }
     }
 
+    _showTooltip() {
+        if (this._settings && BUTTON_LABEL_KEYS[this.id]) {
+            let t = getTranslator(this._settings);
+            this._tooltip.set_text(t(BUTTON_LABEL_KEYS[this.id]));
+        }
+        let [bx, by] = this.get_transformed_position();
+        let [bw] = this.get_size();
+        let [, tw] = this._tooltip.get_preferred_width(-1);
+        let [, th] = this._tooltip.get_preferred_height(-1);
+        this._tooltip.set_position(Math.round(bx + (bw - tw) / 2), Math.round(by - th - 6));
+        this._tooltip.show();
+    }
+
+    _hideTooltip() {
+        if (this._tooltipTimeoutId > 0) {
+            GLib.source_remove(this._tooltipTimeoutId);
+            this._tooltipTimeoutId = 0;
+        }
+        if (this._tooltip)
+            this._tooltip.hide();
+    }
+
+    _onDestroy() {
+        this._hideTooltip();
+        if (this._tooltip) {
+            Main.layoutManager.removeChrome(this._tooltip);
+            this._tooltip.destroy();
+            this._tooltip = null;
+        }
+    }
+
     _onHover() {
         let scale;
         if (this.hover) {
-            scale = 1;
+            scale = 0.95;
+            if (this._tooltipTimeoutId === 0) {
+                this._tooltipTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, TOOLTIP_DELAY, () => {
+                    this._tooltipTimeoutId = 0;
+                    if (this.hover && this.visible)
+                        this._showTooltip();
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
         } else {
-            scale = 0.8;
+            scale = 0.85;
+            this._hideTooltip();
         }
 
         this.ease({

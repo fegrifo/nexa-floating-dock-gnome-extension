@@ -1,0 +1,14 @@
+{
+  "description": "Modernized floating dock with frosted-glass blur, unified Super control button, customizable mouse/touch interactions, radial action menu, and accent color theming.\n\nFork of Floating Dock by sun.wxg@gmail.com.",
+  "extension-id": "nexa-floating-dock",
+  "gettext-domain": "gnome-shell-extensions",
+  "name": "Nexa Floating Dock",
+  "original-authors": "sun.wxg@gmail.com",
+  "settings-schema": "org.gnome.shell.extensions.nexa-floating-dock",
+  "shell-version": [
+    "51"
+  ],
+  "url": "https://github.com/fegrifo/nexa-floating-dock-gnome-extension",
+  "uuid": "nexa-floating-dock@fegrifo",
+  "version": 42
+}

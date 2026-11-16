@@ -1,0 +1,116 @@
+<schemalist gettext-domain="gnome-shell-extensions">
+  <schema id="org.gnome.shell.extensions.nexa-floating-dock" path="/org/gnome/shell/extensions/nexa-floating-dock/">
+    <key name="floating-dock-hotkey" type="as">
+      <default><![CDATA[['<Control><Alt>k']]]></default>
+      <summary>Key to trigger dock</summary>
+      <description>
+      </description>
+    </key>
+    <key name="floating-dock-direction" type="s">
+      <default>"left"</default>
+      <summary>Direction</summary>
+      <description>
+      </description>
+    </key>
+    <key name="floating-dock-icon-size" type="i">
+      <default>44</default>
+      <summary>Icon Size</summary>
+      <description>
+      </description>
+    </key>
+    <key name="floating-dock-icon-file" type="s">
+      <default>'/path/to/icon/file'</default>
+      <summary>Icon file</summary>
+      <description>
+        Path to icon file. Note that the backend only supports
+        local (file://) URIs.
+      </description>
+    </key>
+    <key name="floating-dock-position" type="ai">
+      <default>[-1,-1]</default>
+      <summary>Dock box postion</summary>
+      <description>
+      </description>
+    </key>
+    <key name="floating-dock-icon-favorites" type="b">
+      <default>true</default>
+      <summary>Use system favorites</summary>
+      <description>
+      </description>
+    </key>
+    <key name="floating-dock-app-list" type="s">
+      <default>"firefox.desktop"</default>
+      <summary>Customer app list</summary>
+      <description>
+      </description>
+    </key>
+    <key name="floating-dock-keep-open" type="b">
+      <default>true</default>
+      <summary>Keep app list open</summary>
+      <description>
+      </description>
+    </key>
+    <key name="floating-dock-current-workspace-app" type="b">
+      <default>false</default>
+      <summary>Show current workspace applications</summary>
+      <description>
+      </description>
+    </key>
+    <key name="floating-dock-applications-button" type="b">
+      <default>true</default>
+      <summary>Show applications button</summary>
+      <description>
+      </description>
+    </key>
+    <key name="floating-dock-indicator" type="as">
+      <default>["dash", "bottom"]</default>
+      <summary>Appliation indicator type</summary>
+      <description>
+      </description>
+    </key>
+    <key name="floating-dock-blur-enabled" type="b">
+      <default>true</default>
+      <summary>Enable background blur</summary>
+    </key>
+    <key name="floating-dock-blur-radius" type="i">
+      <default>19</default>
+      <summary>Background blur radius</summary>
+    </key>
+    <key name="floating-dock-bg-opacity" type="i">
+      <default>40</default>
+      <summary>Background opacity percentage (0-100)</summary>
+    </key>
+    <key name="floating-dock-border-radius" type="i">
+      <default>12</default>
+      <summary>Dock corner radius in pixels</summary>
+    </key>
+    <key name="floating-dock-hover-lift" type="i">
+      <default>10</default>
+      <summary>Icon hover lift height in pixels</summary>
+    </key>
+    <key name="floating-dock-accent-color" type="s">
+      <default>'#ffffff'</default>
+      <summary>Accent color for running indicator and Super icon</summary>
+    </key>
+    <key name="floating-dock-action-left-click" type="s">
+      <default>'overview'</default>
+      <summary>Action for single left click on the control button</summary>
+    </key>
+    <key name="floating-dock-action-double-click" type="s">
+      <default>'toggle-dock'</default>
+      <summary>Action for double left click on the control button</summary>
+    </key>
+    <key name="floating-dock-action-right-click" type="s">
+      <default>'radial-menu'</default>
+      <summary>Action for right click on the control button</summary>
+    </key>
+    <key name="floating-dock-long-press-enabled" type="b">
+      <default>true</default>
+      <summary>Enable long press / touch hold to trigger right-click action</summary>
+    </key>
+    <key name="floating-dock-language" type="s">
+      <default>'auto'</default>
+      <summary>Interface and tooltip language (auto, en, pt_BR, es)</summary>
+    </key>
+  </schema>
+</schemalist>

@@ -9,6 +9,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as DND from 'resource:///org/gnome/shell/ui/dnd.js';
 import * as AppFavorites from 'resource:///org/gnome/shell/ui/appFavorites.js';
 import {ItemContainer, ApplicationsButton} from './itemContainer.js';
+import * as Util from './util.js';
 import {NUMBER_TO_CHAR_UPPERCASE, NUMBER_TO_CHAR} from './util.js';
 import {ItemBox} from './itemBox.js';
 import {AroundButtonManager} from './aroundButton.js';
@@ -22,6 +23,16 @@ const KEEP_OPEN = 'floating-dock-keep-open';
 const INDICATOR = 'floating-dock-indicator';
 const CURRENT_WORKSPACE = 'floating-dock-current-workspace-app';
 const APPLICATIONS_BUTTON = 'floating-dock-applications-button';
+const BLUR_ENABLED = 'floating-dock-blur-enabled';
+const BLUR_RADIUS = 'floating-dock-blur-radius';
+const BG_OPACITY = 'floating-dock-bg-opacity';
+const BORDER_RADIUS = 'floating-dock-border-radius';
+const ACCENT_COLOR = 'floating-dock-accent-color';
+const ACTION_LEFT = 'floating-dock-action-left-click';
+const ACTION_DOUBLE = 'floating-dock-action-double-click';
+const ACTION_RIGHT = 'floating-dock-action-right-click';
+const LONG_PRESS = 'floating-dock-long-press-enabled';
+const LONG_PRESS_DELAY = 500;
 
 const ITEM_ANIMATION_TIME = 200;
 
@@ -32,12 +43,12 @@ export const DockBox = GObject.registerClass({
     Signals: {
         'dock-updated': {},
     },
-}, class DockBox extends St.BoxLayout {
+}, class DockBox extends St.Widget {
     _init(params) {
         super._init({ name: 'floating-dock',
                       can_focus: true,
                       reactive: true,
-                      x_align: Clutter.ActorAlign.CENTER });
+                      layout_manager: new Clutter.BinLayout() });
 
         this.settings = params.settings;
         this.iconSize = params.iconSize;
@@ -57,11 +68,21 @@ export const DockBox = GObject.registerClass({
 
         this._mainButton.connect('clicked', this._mainButtonClicked.bind(this));
         this._mainButton.connect('button-press-event', this._mainButtonPress.bind(this));
-
-        this._mainButton.connect('notify::allocation', () => {
-            let box = this._mainButton.get_allocation_box();
-            this._mainButtonX = box.x1;
-            this._mainButtonY = box.y1;
+        this._mainButton.connect('notify::pressed', () => {
+            if (!this._mainButton.pressed)
+                this._cancelLongPress();
+        });
+        this._mainButton.connect('leave-event', () => {
+            this._cancelLongPress();
+            return Clutter.EVENT_PROPAGATE;
+        });
+        this._mainButton.connect('touch-event', (_actor, event) => {
+            let type = event.type();
+            if (type === Clutter.EventType.TOUCH_BEGIN)
+                this._startLongPress();
+            else if (type === Clutter.EventType.TOUCH_END || type === Clutter.EventType.TOUCH_CANCEL)
+                this._cancelLongPress();
+            return Clutter.EVENT_PROPAGATE;
         });
 
         this._label = new St.Label({ style_class: 'dash-label',
@@ -77,14 +98,40 @@ export const DockBox = GObject.registerClass({
         this._inPreviewMode = false;
         this._inPreviewButton = null;
         this._timeoutId = 0;
+        this._clickTimeoutId = 0;
+        this._longPressTimeoutId = 0;
+        this._longPressTriggered = false;
+        this._outsideClickId = 0;
+        this._outsideIdleId = 0;
+        this._wasExpandedBeforePopup = false;
         this._inOverview = false;
         [this._mainButtonX, this._mainButtonY] = this.settings.get_value(DOCK_POSITION).deep_unpack();
         this._useFavorites = this.settings.get_boolean(USE_FAVORITES);
         this._appSystem = Shell.AppSystem.get_default();
         this._userApps = (this.settings.get_string(APP_LIST)).split(';');
 
+        this._bg = new St.Widget({
+            style_class: 'item-box',
+            x_expand: true,
+            y_expand: true,
+        });
+        this._applyAppearance();
+        this.add_child(this._bg);
+
+        let isVertical = (this.direction == St.Side.TOP || this.direction == St.Side.BOTTOM);
+        this._content = new St.BoxLayout({
+            orientation: isVertical ? Clutter.Orientation.VERTICAL : Clutter.Orientation.HORIZONTAL,
+        });
+        this.add_child(this._content);
+
         this._box = new ItemBox(this.direction);
-        this.add_child(this._box);
+        if (this.direction == St.Side.LEFT || this.direction == St.Side.TOP) {
+            this._content.add_child(this._box);
+            this._content.add_child(this._mainButton);
+        } else {
+            this._content.add_child(this._mainButton);
+            this._content.add_child(this._box);
+        }
 
         this._workId = Main.initializeDeferredWork(this, this._redisplay.bind(this));
 
@@ -101,11 +148,47 @@ export const DockBox = GObject.registerClass({
         });
 
         this._aroundButtonManager = new AroundButtonManager(this.iconSize, this._mainButton, this.settings, this.dir);
+        this._aroundButtonManager._aroundButtons.forEach(b => {
+            b.connect('clicked', () => this._detachOutsideClick());
+        });
 
         Main.layoutManager.addChrome(this, { trackFullscreen: true });
 
-        this._mainButton.set_position(this._mainButtonX, this._mainButtonY);
+        this.set_position(this._mainButtonX, this._mainButtonY);
         this._monitorChanged();
+    }
+
+    _applyAppearance() {
+        let blurEnabled = this.settings.get_boolean(BLUR_ENABLED);
+        let blurRadius = this.settings.get_int(BLUR_RADIUS);
+        let bgOpacity = this.settings.get_int(BG_OPACITY) / 100.0;
+        let borderRadius = this.settings.get_int(BORDER_RADIUS);
+
+        this._bg.set_style(
+            `border-radius: ${borderRadius}px; background-color: rgba(10, 10, 10, ${bgOpacity.toFixed(2)});`
+        );
+
+        let existingBlur = this._bg.get_effect('dock-blur');
+        if (blurEnabled) {
+            if (existingBlur) {
+                existingBlur.radius = blurRadius;
+            } else {
+                try {
+                    const blur = new Shell.BlurEffect({
+                        radius: blurRadius,
+                        brightness: 1.0,
+                        mode: Shell.BlurMode.BACKGROUND,
+                    });
+                    this._bg.add_effect_with_name('dock-blur', blur);
+                } catch (e) {
+                    logError(e, 'floatingDock: failed to add BlurEffect');
+                }
+            }
+        } else if (existingBlur) {
+            this._bg.remove_effect_by_name('dock-blur');
+        }
+
+        this._bg.queue_redraw();
     }
 
     _connectSignals() {
@@ -139,6 +222,17 @@ export const DockBox = GObject.registerClass({
             this.queueRedisplay();
         });
 
+        this._accentColor = this.settings.get_string(ACCENT_COLOR);
+        this.accentColorID = this.settings.connect("changed::" + ACCENT_COLOR, () => {
+            this._accentColor = this.settings.get_string(ACCENT_COLOR);
+            this.queueRedisplay();
+        });
+
+        this.blurEnabledID = this.settings.connect("changed::" + BLUR_ENABLED, () => this._applyAppearance());
+        this.blurRadiusID = this.settings.connect("changed::" + BLUR_RADIUS, () => this._applyAppearance());
+        this.bgOpacityID = this.settings.connect("changed::" + BG_OPACITY, () => this._applyAppearance());
+        this.borderRadiusID = this.settings.connect("changed::" + BORDER_RADIUS, () => this._applyAppearance());
+
         this.installChangedID = this._appSystem.connect('installed-changed', () => {
             AppFavorites.getAppFavorites().reload();
             this.queueRedisplay();
@@ -149,12 +243,11 @@ export const DockBox = GObject.registerClass({
 
         this._overViewShownID = Main.overview.connect('showing', () => {
             this._inOverview = true;
-            this._activateWindow();
-            this._mainButton.hide(); });
+            this.hide(); });
         this._overViewHiddenID = Main.overview.connect('hiding', () => {
             this._inOverview = false;
-            this._activateWindow();
-            this._mainButton.show(); });
+            this.show();
+            this._showDock(false); });
         this._monitorChangedID = Main.layoutManager.connect('monitors-changed', this._monitorChanged.bind(this));
 
         this._workspaceChangedID = global.workspace_manager.connect('active-workspace-changed',
@@ -171,9 +264,6 @@ export const DockBox = GObject.registerClass({
         else
             this._addCustomerApp();
         this._addApps();
-
-        if (this._applicationButton)
-            this._addApplicationButton();
 
         this._showDock(false);
     }
@@ -218,11 +308,13 @@ export const DockBox = GObject.registerClass({
                 number: this._itemNumber++,
                 iconSize: this.iconSize,
                 indicator: this._indicator,
+                accentColor: this._accentColor,
                 currentWorkspace: this._currentWorkspaceApp,
                 settings: this.settings,
                 dir: this.dir
             });
             item.button.connect('activate-window', this._activateWindow.bind(this));
+            item.button.connect('hover-redraw', () => this._bg.queue_redraw());
             item.button.connect('in-preview', (button, state) => {
                 this._inPreviewMode = state;
                 if (state)
@@ -246,11 +338,13 @@ export const DockBox = GObject.registerClass({
                 number: this._itemNumber++,
                 iconSize: this.iconSize,
                 indicator: this._indicator,
+                accentColor: this._accentColor,
                 currentWorkspace: this._currentWorkspaceApp,
                 settings: this.settings,
                 dir: this.dir
             });
             item.button.connect('activate-window', this._activateWindow.bind(this));
+            item.button.connect('hover-redraw', () => this._bg.queue_redraw());
             item.button.connect('in-preview', (button, state) => {
                 this._inPreviewMode = state;
                 if (state)
@@ -273,11 +367,13 @@ export const DockBox = GObject.registerClass({
                 number: this._itemNumber++,
                 iconSize: this.iconSize,
                 indicator: this._indicator,
+                accentColor: this._accentColor,
                 currentWorkspace: this._currentWorkspaceApp,
                 settings: this.settings,
                 dir: this.dir
             });
             item.button.connect('activate-window', this._activateWindow.bind(this));
+            item.button.connect('hover-redraw', () => this._bg.queue_redraw());
             item.button.connect('in-preview', (button, state) => {
                 this._inPreviewMode = state;
                 if (state)
@@ -359,22 +455,139 @@ export const DockBox = GObject.registerClass({
             Main.activateWindow(window);
     }
 
-    _mainButtonClicked() {
-        this._aroundButtonManager.popupClose();
-        this._showApp = !this._showApp;
-        this._showDock(true);
+    _executeButtonAction(action) {
+        if (action === 'overview') {
+            this._closeAroundMenu(false);
+            Main.overview.show(2);
+            this._activateWindow();
+        } else if (action === 'toggle-dock') {
+            this._closeAroundMenu(false);
+            this._showApp = !this._showApp;
+            this.settings.set_boolean(KEEP_OPEN, this._showApp);
+            this._showDock(true);
+        } else if (action === 'radial-menu') {
+            this._toggleRadialMenu();
+        }
     }
 
-    _mainButtonPress(actor, event) {
-        if (event.get_button() == 3) {
+    _toggleRadialMenu() {
+        if (this._aroundButtonManager.showAroundButton) {
+            this._closeAroundMenu(true);
+        } else {
+            this._wasExpandedBeforePopup = this._showApp;
             if (this._showApp) {
                 this._showApp = false;
                 this._showDock(false);
             }
-
             this._aroundButtonManager.popup();
+            this._attachOutsideClick();
+        }
+    }
+
+    _startLongPress() {
+        this._cancelLongPress();
+        this._longPressTriggered = false;
+        if (!this.settings.get_boolean(LONG_PRESS))
+            return;
+
+        this._longPressTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, LONG_PRESS_DELAY, () => {
+            this._longPressTimeoutId = 0;
+            this._longPressTriggered = true;
+            this._executeButtonAction(this.settings.get_string(ACTION_RIGHT));
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _cancelLongPress() {
+        if (this._longPressTimeoutId > 0) {
+            GLib.source_remove(this._longPressTimeoutId);
+            this._longPressTimeoutId = 0;
+        }
+    }
+
+    _mainButtonClicked() {
+        this._cancelLongPress();
+        if (this._longPressTriggered) {
+            this._longPressTriggered = false;
+            return;
+        }
+
+        let doubleAction = this.settings.get_string(ACTION_DOUBLE);
+        let leftAction = this.settings.get_string(ACTION_LEFT);
+
+        if (doubleAction === 'none') {
+            this._executeButtonAction(leftAction);
+            return;
+        }
+
+        if (this._clickTimeoutId) {
+            GLib.source_remove(this._clickTimeoutId);
+            this._clickTimeoutId = 0;
+            this._executeButtonAction(doubleAction);
+            return;
+        }
+
+        this._clickTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+            this._clickTimeoutId = 0;
+            this._executeButtonAction(leftAction);
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _mainButtonPress(actor, event) {
+        let btn = event.get_button();
+        if (btn === 1) {
+            this._startLongPress();
+        } else if (btn === 3) {
+            this._cancelLongPress();
+            this._executeButtonAction(this.settings.get_string(ACTION_RIGHT));
         }
         return Clutter.EVENT_PROPAGATE;
+    }
+
+    _attachOutsideClick() {
+        this._detachOutsideClick();
+        this._outsideIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            this._outsideIdleId = 0;
+            if (!this._aroundButtonManager.showAroundButton)
+                return GLib.SOURCE_REMOVE;
+
+            this._outsideClickId = global.stage.connect('button-press-event', (_stage, _ev) => {
+                if (!this._aroundButtonManager.showAroundButton) {
+                    this._detachOutsideClick();
+                    return Clutter.EVENT_PROPAGATE;
+                }
+                if (this._mainButton.hover ||
+                    this._aroundButtonManager._aroundButtons.some(b => b.visible && b.hover))
+                    return Clutter.EVENT_PROPAGATE;
+
+                this._closeAroundMenu(true);
+                return Clutter.EVENT_PROPAGATE;
+            });
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _detachOutsideClick() {
+        if (this._outsideIdleId > 0) {
+            GLib.source_remove(this._outsideIdleId);
+            this._outsideIdleId = 0;
+        }
+        if (this._outsideClickId > 0) {
+            global.stage.disconnect(this._outsideClickId);
+            this._outsideClickId = 0;
+        }
+    }
+
+    _closeAroundMenu(restoreDock) {
+        this._detachOutsideClick();
+        if (this._aroundButtonManager.showAroundButton)
+            this._aroundButtonManager.hideButton(true);
+        if (restoreDock && this._wasExpandedBeforePopup) {
+            this._wasExpandedBeforePopup = false;
+            this._showApp = true;
+            this._showDock(true);
+        }
     }
 
     _vimClose() {
@@ -387,9 +600,11 @@ export const DockBox = GObject.registerClass({
     }
 
     _showDock(animation) {
-        if (this._showApp) {
+        if (!this._inOverview)
             this.show();
-            this.set_position(this._mainButtonX, this._mainButtonY);
+
+        if (this._showApp) {
+            this._box.show();
 
             if (animation) {
                 this._box.setSlide(0);
@@ -400,18 +615,18 @@ export const DockBox = GObject.registerClass({
                 this._box.setSlide(1);
 
         } else {
-            this.set_position(this._mainButtonX, this._mainButtonY);
             if (animation) {
                 this._box.setSlide(1);
                 this._box.ease_property('@layout.slide', 0, {
                     mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                     duration: ITEM_ANIMATION_TIME,
                     onComplete: () => {
-                        this.hide();
+                        this._box.hide();
                     }
                 });
             } else {
-                this.hide();
+                this._box.setSlide(0);
+                this._box.hide();
             }
         }
 
@@ -432,11 +647,10 @@ export const DockBox = GObject.registerClass({
             this._timeoutId = 0;
 
             if (!this._mainButton)
-                return;
+                return GLib.SOURCE_REMOVE;
 
-            let box = this._mainButton.get_allocation_box();
-            this.settings.set_value(DOCK_POSITION,
-                                new GLib.Variant('ai', [box.x1 ,box.y1]));
+            if (this._mainButtonX >= 0 && this._mainButtonY >= 0)
+                this._savePosition();
 
             return GLib.SOURCE_REMOVE;
         });
@@ -497,19 +711,21 @@ export const DockBox = GObject.registerClass({
         let ws = workspaceManager.get_active_workspace();
         let workArea = ws.get_work_area_all_monitors();
 
-        let mainButtonBox = this._mainButton.get_allocation_box();
-        let mainButtonWidth = mainButtonBox.x2 - mainButtonBox.x1;
-        let mainButtonHeight = mainButtonBox.y2 - mainButtonBox.y1;
+        let [, natWidth] = this._mainButton.get_preferred_width(-1);
+        let [, natHeight] = this._mainButton.get_preferred_height(-1);
 
-        let x = mainButtonBox.x1;
-        let y = mainButtonBox.y1;
+        if (this._mainButtonX >= 0 && this._mainButtonY >= 0) {
+            if (this._mainButtonX < workArea.x)
+                this._mainButtonX = workArea.x;
+            if (this._mainButtonX + natWidth > workArea.x + workArea.width)
+                this._mainButtonX = workArea.x + workArea.width - natWidth;
+            if (this._mainButtonY < workArea.y)
+                this._mainButtonY = workArea.y;
+            if (this._mainButtonY + natHeight > workArea.y + workArea.height)
+                this._mainButtonY = workArea.y + workArea.height - natHeight;
+        }
 
-        if (mainButtonBox.x2 > workArea.x + workArea.width)
-            x = workArea.x + workArea.width - mainButtonWidth;
-        if (mainButtonBox.y2 > workArea.y + workArea.height)
-            y = workArea.y + workArea.height - mainButtonHeight;
-
-        this._mainButton.set_position(x, y);
+        this.queue_relayout();
     }
 
     _sureInWorkArea(box) {
@@ -520,76 +736,19 @@ export const DockBox = GObject.registerClass({
         let boxWidth = box.x2 - box.x1;
         let boxHeight = box.y2 - box.y1;
 
-        let mainButtonBox = this._mainButton.get_allocation_box();
-        let mainButtonWidth = mainButtonBox.x2 - mainButtonBox.x1;
-        let mainButtonHeight = mainButtonBox.y2 - mainButtonBox.y1;
-
         let x = box.x1;
         let y = box.y1;
 
-        switch (this.direction) {
-        case St.Side.TOP:
-            if (box.x1 < workArea.x)
-                x = workArea.x;
-            else if (box.x2 > (workArea.x + workArea.width))
-                x = workArea.x + workArea.width - boxWidth;
+        if (x < workArea.x)
+            x = workArea.x;
+        else if (x + boxWidth > workArea.x + workArea.width)
+            x = workArea.x + workArea.width - boxWidth;
 
-            if (box.y1 < workArea.y)
-                y = workArea.y;
+        if (y < workArea.y)
+            y = workArea.y;
+        else if (y + boxHeight > workArea.y + workArea.height)
+            y = workArea.y + workArea.height - boxHeight;
 
-            if ((boxHeight + mainButtonHeight) > workArea.height ||
-                (box.y2 + mainButtonHeight) > (workArea.y + workArea.height))
-                y = workArea.y + workArea.height - boxHeight - mainButtonHeight;
-
-            this._mainButton.set_position(x, y + boxHeight);
-            break;
-        case St.Side.BOTTOM:
-            if (box.x1 < workArea.x)
-                x = workArea.x;
-            else if (box.x2 > (workArea.x + workArea.width))
-                x = workArea.x + workArea.width - boxWidth;
-
-            if (box.y2 > (workArea.y + workArea.height))
-                y = workArea.y + workArea.height - boxHeight;
-
-            if ((boxHeight + mainButtonHeight) > workArea.height ||
-                (box.y1 - mainButtonHeight) < workArea.y)
-                y = workArea.y + mainButtonHeight;
-
-            this._mainButton.set_position(x, y - mainButtonHeight);
-            break;
-        case St.Side.LEFT:
-            if (box.x1 < workArea.x)
-                x = workArea.x;
-
-            if (boxWidth + mainButtonWidth >  workArea.width ||
-                box.x1 + boxWidth + mainButtonWidth > workArea.x + workArea.width)
-                x = workArea.x + workArea.width - boxWidth - mainButtonWidth;
-
-            if (box.y1 < workArea.y)
-                y = workArea.y;
-            else if (box.y2 > (workArea.y + workArea.height))
-                y = workArea.y + workArea.height - boxHeight;
-
-            this._mainButton.set_position(x + boxWidth, y);
-            break;
-        case St.Side.RIGHT:
-            if (box.x2 > (workArea.x + workArea.width))
-                x = workArea.x + workArea.width - boxWidth;
-
-            if (boxWidth + mainButtonWidth >  workArea.width ||
-                box.x1 - mainButtonWidth < workArea.x)
-                x = workArea.x + mainButtonWidth;
-
-            if (box.y1 < workArea.y)
-                y = workArea.y;
-            else if (box.y2 > (workArea.y + workArea.height))
-                y = workArea.y + workArea.height - boxHeight;
-
-            this._mainButton.set_position(x - mainButtonWidth, y);
-        default:
-            break;
-        }
         box.set_origin(x, y);
     }
 
@@ -603,25 +762,28 @@ export const DockBox = GObject.registerClass({
         let mainButtonWidth = mainButtonBox.x2 - mainButtonBox.x1;
         let mainButtonHeight = mainButtonBox.y2 - mainButtonBox.y1;
 
-        let x = box.x1;
-        let y = box.y1;
+        if (this._mainButtonX < 0 || this._mainButtonY < 0) {
+            let ws = global.workspace_manager.get_active_workspace();
+            let workArea = ws.get_work_area_all_monitors();
+            let centerX = workArea.x + Math.round((workArea.width - boxWidth) / 2);
+            this._mainButtonX = (this.direction == St.Side.LEFT)
+                ? centerX + Math.max(0, boxWidth - mainButtonWidth)
+                : centerX;
+            this._mainButtonY = workArea.y + workArea.height - mainButtonHeight - 10;
+        }
+
+        let x = this._mainButtonX;
+        let y = this._mainButtonY;
 
         switch (this.direction) {
         case St.Side.TOP:
-            x = this._mainButtonX;
-            y = this._mainButtonY - boxHeight;
+            y = this._mainButtonY - (boxHeight - mainButtonHeight);
             break;
         case St.Side.LEFT:
-            x = this._mainButtonX - boxWidth;
-            y = this._mainButtonY;
+            x = this._mainButtonX - (boxWidth - mainButtonWidth);
             break;
         case St.Side.BOTTOM:
-            x = this._mainButtonX;
-            y = this._mainButtonY + mainButtonHeight;
-            break;
         case St.Side.RIGHT:
-            x = this._mainButtonX + mainButtonWidth;
-            y = this._mainButtonY;
         default:
             break;
         }
@@ -668,27 +830,50 @@ export const DockBox = GObject.registerClass({
 
     _onDragMotion(dropEvent) {
         this._inDrag = true;
-        this._mainButton.set_position(dropEvent.dragActor.x, dropEvent.dragActor.y);
+        this._mainButtonX = dropEvent.dragActor.x;
+        this._mainButtonY = dropEvent.dragActor.y;
+        this.queue_relayout();
+
+        if (this._aroundButtonManager.showAroundButton) {
+            this._aroundButtonManager.set_position(
+                this._aroundStartX + (this._mainButtonX - this._dragStartX),
+                this._aroundStartY + (this._mainButtonY - this._dragStartY)
+            );
+        }
 
         this._showDock(false);
         return DND.DragMotionResult.CONTINUE;
     }
 
     _onDragBegin(_draggable, _time) {
+        this._cancelLongPress();
+        this._dragStartX = this._mainButtonX;
+        this._dragStartY = this._mainButtonY;
+        this._aroundStartX = this._aroundButtonManager.x;
+        this._aroundStartY = this._aroundButtonManager.y;
         this._dragMonitor = {
             dragMotion: this._onDragMotion.bind(this),
         };
         DND.addDragMonitor(this._dragMonitor);
     }
 
+    _savePosition() {
+        this.settings.set_value(DOCK_POSITION,
+            new GLib.Variant('ai', [Math.round(this._mainButtonX), Math.round(this._mainButtonY)]));
+    }
+
     _onDragCancelled(_draggable, _time) {
         this._inDrag = false;
+        DND.removeDragMonitor(this._dragMonitor);
+        this._savePosition();
+        this._showDock(false);
     }
 
     _onDragEnd(_draggable, _time, _snapback) {
         this._inDrag = false;
         DND.removeDragMonitor(this._dragMonitor);
 
+        this._savePosition();
         this._showDock(false);
         this._updateMenuStyle();
     }
@@ -745,6 +930,16 @@ export const DockBox = GObject.registerClass({
             this.settings.disconnect(this.currentWorkspaceAppID);
         if (this.applicationButtonID)
             this.settings.disconnect(this.applicationButtonID);
+        if (this.accentColorID)
+            this.settings.disconnect(this.accentColorID);
+        if (this.blurEnabledID)
+            this.settings.disconnect(this.blurEnabledID);
+        if (this.blurRadiusID)
+            this.settings.disconnect(this.blurRadiusID);
+        if (this.bgOpacityID)
+            this.settings.disconnect(this.bgOpacityID);
+        if (this.borderRadiusID)
+            this.settings.disconnect(this.borderRadiusID);
         if (this.installChangedID)
             this._appSystem.disconnect(this.installChangedID);
         if (this.appFavoritesChangedID)
@@ -752,6 +947,12 @@ export const DockBox = GObject.registerClass({
         if (this.appStateChangedID)
             this._appSystem.disconnect(this.appStateChangedID);
 
+        if (this._clickTimeoutId) {
+            GLib.source_remove(this._clickTimeoutId);
+            this._clickTimeoutId = 0;
+        }
+        this._cancelLongPress();
+        this._detachOutsideClick();
         this._aroundButtonManager.destroy();
         Main.layoutManager.removeChrome(this._label);
         Main.layoutManager.removeChrome(this);

@@ -40,6 +40,7 @@ const MyAppIcon = GObject.registerClass({
 const MyAppButton = GObject.registerClass({
     Signals: {
         'activate-window': {},
+        'hover-redraw': {},
         'in-preview': { param_types: [GObject.TYPE_BOOLEAN] },
     },
 }, class MyAppButton extends St.Button {
@@ -73,8 +74,6 @@ const MyAppButton = GObject.registerClass({
 
         this._menuManager = new PopupMenu.PopupMenuManager(this);
         this._menu = null;
-        this._menuActivateWindowId = 0;
-        this._menuOpenStateChangedId = 0;
 
         const rightClickGesture = new Clutter.ClickGesture({
             required_button: Clutter.BUTTON_SECONDARY,
@@ -82,8 +81,6 @@ const MyAppButton = GObject.registerClass({
         });
         rightClickGesture.connect('recognize', () => this._popupMenu());
         this.add_action(rightClickGesture);
-
-        this.connect('destroy', this._onDestroy.bind(this));
     }
 
     vfunc_clicked(button) {
@@ -156,17 +153,20 @@ const MyAppButton = GObject.registerClass({
     }
 
     _onHover() {
-        let scale;
-        if (this.hover) {
-            scale = 0.8;
-        } else {
-            scale = 1;
-        }
+        let hoverLift = this.settings.get_int('floating-dock-hover-lift');
+        let targetY = this.hover ? -hoverLift : 0;
+        let icon = this.get_child();
 
-        this.ease({
-            scale_x: scale,
-            scale_y: scale,
+        icon.ease({
+            translation_y: targetY,
+            duration: 150,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            onComplete: () => this.emit('hover-redraw'),
         });
+
+        let transition = icon.get_transition('translation-y');
+        if (transition)
+            transition.connect('new-frame', () => this.emit('hover-redraw'));
     }
 
     _popupMenu() {
@@ -176,9 +176,9 @@ const MyAppButton = GObject.registerClass({
                 showSingleWindows: true,
             });
             this._menu.setApp(this.app);
-            this._menuActivateWindowId = this._menu.connect('activate-window', (menu, window) => {
+            this._menu.connect('activate-window', (menu, window) => {
                 this.activateWindow(window); });
-            this._menuOpenStateChangedId = this._menu.connect('open-state-changed', (menu, isPoppedUp) => {
+            this._menu.connect('open-state-changed', (menu, isPoppedUp) => {
                 if (!isPoppedUp)
                     this.emit('activate-window');
             });
@@ -224,17 +224,6 @@ const MyAppButton = GObject.registerClass({
         }
     }
 
-    _onDestroy() {
-        if (this._menuActivateWindowId > 0) {
-            this._menu.disconnect(this._menuActivateWindowId);
-            this._menuActivateWindowId = 0;
-        }
-        if (this._menuOpenStateChangedId > 0) {
-            this._menu.disconnect(this._menuOpenStateChangedId);
-            this._menuOpenStateChangedId = 0;
-        }
-    }
-
     animateLaunch() {
         //Used for Icon button right click
     }
@@ -264,7 +253,7 @@ class ItemContainer extends St.Widget {
         this.button = button;
         buttonBox.add_child(button);
 
-        this._indicator = new Indicator.Indicator(params.indicator);
+        this._indicator = new Indicator.Indicator(params.indicator, params.accentColor);
         this.add_child(this._indicator);
         this._indicator.show();
 

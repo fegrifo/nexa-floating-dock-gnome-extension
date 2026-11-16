@@ -9,7 +9,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Util from './util.js';
 import {CreateNumberIcon} from './numberIcon.js';
 
-const SCHEMA = 'org.gnome.shell.extensions.floatingDock';
+const SCHEMA = 'org.gnome.shell.extensions.nexa-floating-dock';
 const DIRECTION = 'floating-dock-direction';
 
 const PREVIEW_MAX_WIDTH = 250;

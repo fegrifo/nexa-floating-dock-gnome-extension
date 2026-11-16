@@ -1,4 +1,4 @@
-PROJECT=floatingDock@sun.wxg@gmail.com
+PROJECT=nexa-floating-dock@fegrifo
 
 schemas:
 	glib-compile-schemas ${PROJECT}/schemas/
