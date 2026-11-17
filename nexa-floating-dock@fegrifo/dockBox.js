@@ -244,6 +244,9 @@ export const DockBox = GObject.registerClass({
         this._overViewShownID = Main.overview.connect('showing', () => {
             this._inOverview = true;
             this.hide(); });
+        this._overViewActiveID = Main.overview.connect('shown', () => {
+            this._inOverview = true;
+            this.hide(); });
         this._overViewHiddenID = Main.overview.connect('hiding', () => {
             this._inOverview = false;
             this.show();
@@ -597,8 +600,11 @@ export const DockBox = GObject.registerClass({
     }
 
     _showDock(animation) {
-        if (!this._inOverview)
-            this.show();
+        if (this._inOverview || Main.overview.visible) {
+            this.hide();
+            return;
+        }
+        this.show();
 
         if (this._showApp) {
             this._box.show();
@@ -906,6 +912,8 @@ export const DockBox = GObject.registerClass({
 
         if (this._overViewShownID)
             Main.overview.disconnect(this._overViewShownID);
+        if (this._overViewActiveID)
+            Main.overview.disconnect(this._overViewActiveID);
         if (this._overViewHiddenID)
             Main.overview.disconnect(this._overViewHiddenID);
         if (this._monitorChangedID)
