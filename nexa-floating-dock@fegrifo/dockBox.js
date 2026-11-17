@@ -392,8 +392,6 @@ export const DockBox = GObject.registerClass({
 
     _activateWindow() {
         this._showApp = this._keepOpen;
-        if (this._inOverview)
-            this._showApp = false;
         if (this._vimMode)
             this._vimClose()
 
@@ -459,7 +457,6 @@ export const DockBox = GObject.registerClass({
         if (action === 'overview') {
             this._closeAroundMenu(false);
             Main.overview.show(2);
-            this._activateWindow();
         } else if (action === 'toggle-dock') {
             this._closeAroundMenu(false);
             this._showApp = !this._showApp;
