@@ -112,5 +112,9 @@
       <default>'auto'</default>
       <summary>Interface and tooltip language (auto, en, pt_BR, es)</summary>
     </key>
+    <key name="floating-dock-open-mode" type="s">
+      <default>'double-click'</default>
+      <summary>How to expand the dock (double-click or hover)</summary>
+    </key>
   </schema>
 </schemalist>

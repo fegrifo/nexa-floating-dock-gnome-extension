@@ -26,6 +26,12 @@ const ACTION_DOUBLE = 'floating-dock-action-double-click';
 const ACTION_RIGHT = 'floating-dock-action-right-click';
 const LONG_PRESS = 'floating-dock-long-press-enabled';
 const LANGUAGE = 'floating-dock-language';
+const OPEN_MODE = 'floating-dock-open-mode';
+
+const OPEN_MODES = [
+    { id: 'double-click', key: 'open_mode_double' },
+    { id: 'hover', key: 'open_mode_hover' },
+];
 
 const BUTTON_ACTIONS = [
     { id: 'overview', key: 'action_overview' },
@@ -276,6 +282,18 @@ export default class FloatingDockPrefs extends ExtensionPreferences {
             });
             return row;
         };
+
+        const openModeId = settings.get_string(OPEN_MODE);
+        const openModeRow = new Adw.ComboRow({
+            title: t('open_mode_title'),
+            subtitle: t('open_mode_sub'),
+            model: Gtk.StringList.new(OPEN_MODES.map(m => t(m.key))),
+            selected: Math.max(0, OPEN_MODES.findIndex(m => m.id === openModeId)),
+        });
+        openModeRow.connect('notify::selected', () => {
+            settings.set_string(OPEN_MODE, OPEN_MODES[openModeRow.get_selected()].id);
+        });
+        actionsGroup.add(openModeRow);
 
         actionsGroup.add(makeActionRow(t('action_left_click'), ACTION_LEFT));
         actionsGroup.add(makeActionRow(t('action_double_click'), ACTION_DOUBLE));

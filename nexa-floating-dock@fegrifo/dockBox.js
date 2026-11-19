@@ -32,7 +32,10 @@ const ACTION_LEFT = 'floating-dock-action-left-click';
 const ACTION_DOUBLE = 'floating-dock-action-double-click';
 const ACTION_RIGHT = 'floating-dock-action-right-click';
 const LONG_PRESS = 'floating-dock-long-press-enabled';
+const OPEN_MODE = 'floating-dock-open-mode';
 const LONG_PRESS_DELAY = 500;
+const HOVER_LEAVE_DELAY = 3000;
+const HOVER_CLICK_OUTSIDE_DELAY = 1000;
 
 const ITEM_ANIMATION_TIME = 200;
 
@@ -48,6 +51,7 @@ export const DockBox = GObject.registerClass({
         super._init({ name: 'floating-dock',
                       can_focus: true,
                       reactive: true,
+                      track_hover: true,
                       layout_manager: new Clutter.BinLayout() });
 
         this.settings = params.settings;
@@ -103,6 +107,9 @@ export const DockBox = GObject.registerClass({
         this._longPressTriggered = false;
         this._outsideClickId = 0;
         this._outsideIdleId = 0;
+        this._hoverLeaveTimeoutId = 0;
+        this._hoverClickOutsideTimeoutId = 0;
+        this._hoverOutsideClickId = 0;
         this._wasExpandedBeforePopup = false;
         this._inOverview = false;
         [this._mainButtonX, this._mainButtonY] = this.settings.get_value(DOCK_POSITION).deep_unpack();
@@ -146,6 +153,9 @@ export const DockBox = GObject.registerClass({
             else
                 this._mainButton.showIcon(false);
         });
+
+        this.connect('notify::hover', this._onDockHoverChanged.bind(this));
+        this._mainButton.connect('notify::hover', this._onMainButtonHoverChanged.bind(this));
 
         this._aroundButtonManager = new AroundButtonManager(this.iconSize, this._mainButton, this.settings, this.dir);
         this._aroundButtonManager._aroundButtons.forEach(b => {
@@ -232,6 +242,10 @@ export const DockBox = GObject.registerClass({
         this.blurRadiusID = this.settings.connect("changed::" + BLUR_RADIUS, () => this._applyAppearance());
         this.bgOpacityID = this.settings.connect("changed::" + BG_OPACITY, () => this._applyAppearance());
         this.borderRadiusID = this.settings.connect("changed::" + BORDER_RADIUS, () => this._applyAppearance());
+        this.openModeID = this.settings.connect("changed::" + OPEN_MODE, () => {
+            this._cancelHoverTimers();
+            this._detachHoverOutsideClick();
+        });
 
         this.installChangedID = this._appSystem.connect('installed-changed', () => {
             AppFavorites.getAppFavorites().reload();
@@ -502,6 +516,88 @@ export const DockBox = GObject.registerClass({
         if (this._longPressTimeoutId > 0) {
             GLib.source_remove(this._longPressTimeoutId);
             this._longPressTimeoutId = 0;
+        }
+    }
+
+    _cancelHoverTimers() {
+        if (this._hoverLeaveTimeoutId > 0) {
+            GLib.source_remove(this._hoverLeaveTimeoutId);
+            this._hoverLeaveTimeoutId = 0;
+        }
+        if (this._hoverClickOutsideTimeoutId > 0) {
+            GLib.source_remove(this._hoverClickOutsideTimeoutId);
+            this._hoverClickOutsideTimeoutId = 0;
+        }
+    }
+
+    _scheduleHoverClose(delay) {
+        this._cancelHoverTimers();
+        if (delay === HOVER_CLICK_OUTSIDE_DELAY) {
+            this._hoverClickOutsideTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
+                this._hoverClickOutsideTimeoutId = 0;
+                if (this.settings.get_string(OPEN_MODE) === 'hover' && this._showApp && !this.hover) {
+                    this._showApp = false;
+                    this._showDock(true);
+                    this._detachHoverOutsideClick();
+                }
+                return GLib.SOURCE_REMOVE;
+            });
+        } else {
+            this._hoverLeaveTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
+                this._hoverLeaveTimeoutId = 0;
+                if (this.settings.get_string(OPEN_MODE) === 'hover' && this._showApp && !this.hover) {
+                    this._showApp = false;
+                    this._showDock(true);
+                    this._detachHoverOutsideClick();
+                }
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+    }
+
+    _attachHoverOutsideClick() {
+        if (this._hoverOutsideClickId > 0)
+            return;
+        this._hoverOutsideClickId = global.stage.connect('button-press-event', () => {
+            if (this.settings.get_string(OPEN_MODE) !== 'hover' || !this._showApp) {
+                this._detachHoverOutsideClick();
+                return Clutter.EVENT_PROPAGATE;
+            }
+            if (!this.hover && !this._aroundButtonManager.showAroundButton)
+                this._scheduleHoverClose(HOVER_CLICK_OUTSIDE_DELAY);
+            return Clutter.EVENT_PROPAGATE;
+        });
+    }
+
+    _detachHoverOutsideClick() {
+        if (this._hoverOutsideClickId > 0) {
+            global.stage.disconnect(this._hoverOutsideClickId);
+            this._hoverOutsideClickId = 0;
+        }
+    }
+
+    _onMainButtonHoverChanged() {
+        if (this.settings.get_string(OPEN_MODE) !== 'hover')
+            return;
+        if (this._mainButton.hover) {
+            this._cancelHoverTimers();
+            if (!this._showApp && !this._aroundButtonManager.showAroundButton && !this._inDrag && !this._inOverview) {
+                this._showApp = true;
+                this._showDock(true);
+                this._attachHoverOutsideClick();
+            }
+        }
+    }
+
+    _onDockHoverChanged() {
+        if (this.settings.get_string(OPEN_MODE) !== 'hover')
+            return;
+        if (this.hover) {
+            this._cancelHoverTimers();
+            if (this._showApp)
+                this._attachHoverOutsideClick();
+        } else if (this._showApp && !this._inDrag) {
+            this._scheduleHoverClose(HOVER_LEAVE_DELAY);
         }
     }
 
@@ -945,6 +1041,8 @@ export const DockBox = GObject.registerClass({
             this.settings.disconnect(this.bgOpacityID);
         if (this.borderRadiusID)
             this.settings.disconnect(this.borderRadiusID);
+        if (this.openModeID)
+            this.settings.disconnect(this.openModeID);
         if (this.installChangedID)
             this._appSystem.disconnect(this.installChangedID);
         if (this.appFavoritesChangedID)
@@ -957,6 +1055,8 @@ export const DockBox = GObject.registerClass({
             this._clickTimeoutId = 0;
         }
         this._cancelLongPress();
+        this._cancelHoverTimers();
+        this._detachHoverOutsideClick();
         this._detachOutsideClick();
         this._aroundButtonManager.destroy();
         Main.layoutManager.removeChrome(this._label);

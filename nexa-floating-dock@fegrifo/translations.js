@@ -66,6 +66,10 @@ const TRANSLATIONS = {
         action_none: 'Disabled',
         long_press_title: 'Long Press / Touch Hold (500ms)',
         long_press_sub: 'Hold left click, finger, or stylus to trigger the Right Click action',
+        open_mode_title: 'Dock Open Mode',
+        open_mode_sub: 'Choose whether to expand the dock by double-clicking or hovering',
+        open_mode_double: 'Double Left Click',
+        open_mode_hover: 'Hover Super Button (auto-hide 3s / click outside 1s)',
 
         group_gestures: 'Built-in Gestures',
         group_gestures_desc: 'Other interactions always available on the Super button',
@@ -160,6 +164,10 @@ const TRANSLATIONS = {
         action_none: 'Desativado',
         long_press_title: 'Pressionar e Segurar (500ms)',
         long_press_sub: 'Segurar o clique esquerdo, dedo ou caneta aciona a ação do Clique Direito',
+        open_mode_title: 'Modo de Abertura da Barra',
+        open_mode_sub: 'Escolha entre abrir com dois cliques ou ao passar o mouse no botão',
+        open_mode_double: 'Clique Duplo',
+        open_mode_hover: 'Passar o Mouse (fecha em 3s fora / 1s ao clicar fora)',
 
         group_gestures: 'Gestos Integrados',
         group_gestures_desc: 'Outras interações sempre disponíveis no botão Super',
@@ -254,6 +262,10 @@ const TRANSLATIONS = {
         action_none: 'Desactivado',
         long_press_title: 'Pulsación Larga / Táctil (500ms)',
         long_press_sub: 'Mantener el clic izquierdo, dedo o lápiz activa la acción de Clic Derecho',
+        open_mode_title: 'Modo de Apertura del Dock',
+        open_mode_sub: 'Elige si abrir la barra con doble clic o al pasar el ratón por el botón',
+        open_mode_double: 'Doble Clic Izquierdo',
+        open_mode_hover: 'Pasar el Ratón (cierra en 3s fuera / 1s al hacer clic fuera)',
 
         group_gestures: 'Gestos Integrados',
         group_gestures_desc: 'Otras interacciones siempre disponibles en el botón Super',
